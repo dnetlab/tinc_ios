@@ -2,4 +2,4 @@
 It's a library for ios network extension. 
 
 ## Detail
-Please refer to <Tinc in ios.doc>
+Please refer to document Tinc in ios.doc
