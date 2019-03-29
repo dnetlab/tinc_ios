@@ -21,7 +21,7 @@
 #ifndef __TINC_CONNECTION_H__
 #define __TINC_CONNECTION_H__
 
-#include <openssl/rsa.h>
+#include "openssl/rsa.h"
 #include <openssl/evp.h>
 
 #include "avl_tree.h"

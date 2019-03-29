@@ -352,7 +352,7 @@ static bool write_packet(vpn_packet_t *packet) {
 			   packet->len, device_info);
 
 	if(write(write_fd, packet->data, packet->len) < 0) {
-		if(errno != EINTR && errno != EAGAIN) {
+		if(errno != EINTR && errno != EAGAIN && errno != ENOBUFS) {
 			logger(LOG_ERR, "Can't write to %s %s: %s", device_info, device, strerror(errno));
 			running = false;
 		}

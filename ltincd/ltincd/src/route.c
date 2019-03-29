@@ -32,6 +32,7 @@
 #include "route.h"
 #include "subnet.h"
 #include "utils.h"
+#include "local_subnet.h"
 
 rmode_t routing_mode = RMODE_ROUTER;
 fmode_t forwarding_mode = FMODE_INTERNAL;
@@ -927,6 +928,376 @@ static void route_arp(node_t *source, vpn_packet_t *packet) {
 	send_packet(source, packet);
 }
 
+
+
+static void arp_reply_from(node_t *source, vpn_packet_t *packet)
+{
+    struct ether_arp arp;
+    mac_t o_smac;
+    ipv4_t o_sip;
+    ipv4_t o_dip;
+    
+    memcpy(&arp, &packet->data[ether_size], arp_size);
+    memcpy(o_sip.x, arp.arp_spa, sizeof(o_sip.x));
+    memcpy(o_dip.x, arp.arp_tpa, sizeof(o_dip.x));
+    memcpy(o_smac.x, arp.arp_sha, ETH_ALEN);
+    
+    
+    //update source node mac
+    subnet_t* subnet = lookup_subnet_ipv4(&o_sip);
+    if (subnet && subnet->owner)
+    {
+        logger(LOG_WARNING, "Get a reply from owner(%s)", subnet->owner->name);
+        timerclear(&subnet->owner->arp_request_time);
+        subnet->owner->have_mac = 1;
+        memcpy(subnet->owner->node_mac.x, o_smac.x, ETH_ALEN);
+    }
+    else
+    {
+        logger(LOG_WARNING, "Get a reply but cannot find arp source subnet");
+    }
+    return;
+}
+
+static void arp_reply_to(node_t *source, vpn_packet_t *packet)
+{
+    struct ether_arp arp;
+    subnet_t *subnet;
+    subnet_t *from_subnet;
+    ipv4_t o_sip;
+    ipv4_t o_dip;
+    mac_t o_smac;
+    
+    ipv4_t n_sip;
+    ipv4_t n_dip;
+    mac_t n_smac;
+    mac_t n_dmac;
+    
+    memcpy(&arp, packet->data + ether_size, arp_size);
+    memcpy(o_sip.x, arp.arp_spa, sizeof(o_sip.x));
+    memcpy(o_dip.x, arp.arp_tpa, sizeof(o_dip.x));
+    memcpy(o_smac.x, arp.arp_sha, ETH_ALEN);
+    subnet = lookup_subnet_ipv4(&o_dip);
+    if (!subnet)
+    {
+        logger(LOG_WARNING, "Cannot find arp target subnet");
+        return;
+    }
+    if (!subnet->owner)
+    {
+        logger(LOG_WARNING, "Cannot find arp target subnet owner");
+        return;
+    }
+    if (subnet->owner != myself)
+    {
+        logger(LOG_WARNING, "Arp request target not for us");
+        return;
+    }
+    
+    subnet_t* src_subnet = lookup_subnet_ipv4(&o_sip);
+    if (!src_subnet)
+    {
+        logger(LOG_WARNING, "Cannot find arp sender subnet");
+        return;
+    }
+    if (!src_subnet->owner)
+    {
+        logger(LOG_WARNING, "Cannot find arp sender subnet owner");
+        return;
+    }
+#if 0
+    if (src_subnet->owner != source)
+    {
+        logger(DEBUG_TRAFFIC, LOG_WARNING, "Subnet owner != source");
+        return;
+    }
+#endif
+    memcpy(n_sip.x, o_dip.x, sizeof(n_sip.x));
+    memcpy(n_dip.x, o_sip.x, sizeof(n_dip.x));
+    memcpy(n_dmac.x, o_smac.x, sizeof(n_dmac.x));
+    memcpy(n_smac.x, myself->node_mac.x, sizeof(n_dmac.x));
+    
+    memcpy(&packet->data[0], &packet->data[ETH_ALEN], ETH_ALEN);
+    memcpy(&packet->data[ETH_ALEN], myself->node_mac.x, ETH_ALEN);
+    
+    *(uint16_t *)(&(packet->data[12])) = htons(ETH_P_ARP);
+    arp.arp_hrd = htons(ARPHRD_ETHER);
+    arp.arp_pro = htons(ETH_P_IP);
+    arp.arp_hln = ETH_ALEN;
+    arp.arp_pln = 4;
+    arp.arp_op = htons(ARPOP_REPLY);
+    memcpy(arp.arp_sha, n_smac.x, ETH_ALEN);
+    memcpy(arp.arp_spa, n_sip.x, sizeof(n_sip.x));
+    memcpy(arp.arp_tha, n_dmac.x, ETH_ALEN);
+    memcpy(arp.arp_tpa, n_dip.x, sizeof(n_dip.x));
+    memcpy(packet->data + ether_size, &arp, arp_size);
+    
+    //update source node mac
+    timerclear(&src_subnet->owner->arp_request_time);
+    src_subnet->owner->have_mac = 1;
+    memcpy(src_subnet->owner->node_mac.x, o_smac.x, ETH_ALEN);
+    
+    send_packet(source, packet);
+    return;
+}
+
+static void route_fake_arp2(node_t *source, vpn_packet_t *packet)
+{
+    struct ether_arp arp;
+    subnet_t *subnet;
+    subnet_t *from_subnet;
+    struct in_addr addr;
+    mac_t src;
+    
+    if(!checklength(source, packet, ether_size + arp_size))
+        return;
+    
+    memcpy(&src, &packet->data[6], sizeof src);
+    logger(LOG_WARNING, "in route_fake_arp2 src mac:");
+    //dump_mac(src.x);
+    
+    memcpy(&arp, &packet->data[ether_size], arp_size);
+    
+    /* Check if this is a valid ARP request */
+    
+    if(ntohs(arp.arp_hrd) != ARPHRD_ETHER || ntohs(arp.arp_pro) != ETH_P_IP ||
+       arp.arp_hln != ETH_ALEN) {
+        logger(LOG_WARNING, "Cannot route packet: received unknown type ARP request");
+        return;
+    }
+    
+    uint16_t arp_type = ntohs(arp.arp_op);
+    if (arp_type == ARPOP_REQUEST)
+    {
+        logger(LOG_WARNING, "reply to");
+        arp_reply_to(source, packet);
+    }
+    else if(arp_type == ARPOP_REPLY)
+    {
+        logger(LOG_WARNING, "reply from");
+        arp_reply_from(source, packet);
+    }
+    else
+    {
+        logger(LOG_WARNING, "Cannot route packet: cannot handle ARP type");
+    }
+    return;
+}
+
+/* we need wait a few time for the next arp request */
+static int check_arp_start(node_t *owner)
+{
+    int ret = 0;
+    struct timeval *owner_tv = &owner->arp_request_time;
+    if ((!owner->have_mac))
+    {
+        struct timeval now_tv;
+        if (timerisset(owner_tv))
+        {
+            gettimeofday(&now_tv, NULL);
+            struct timeval last_tv;
+            struct timeval delta_tv = {1, 0};
+            timersub(&now_tv, &delta_tv, &last_tv);
+            if (timercmp(owner_tv, &last_tv, <))
+            {
+                *owner_tv = now_tv;
+                ret = 1;
+            }
+        }
+        else
+        {
+            gettimeofday(owner_tv, NULL);
+            ret = 1;
+        }
+    }
+    return ret;
+}
+
+static void arp_request(node_t *dest_owner, ipv4_t *dest, vpn_packet_t *packet)
+{
+    struct ether_arp arp;
+    ipv4_t src;
+    
+    if(!checklength(myself, packet, ether_size + arp_size))
+        return;
+    
+    if (!check_arp_start(dest_owner))
+    {
+        return;
+    }
+    memcpy(&src, &packet->data[26], sizeof src);
+    memset(&packet->data[0], 0xff, ETH_ALEN);
+    memcpy(&packet->data[ETH_ALEN], myself->node_mac.x, ETH_ALEN);
+    *(uint16_t *)(&(packet->data[12])) = htons(ETH_P_ARP);
+    arp.arp_hrd = htons(ARPHRD_ETHER);
+    arp.arp_pro = htons(ETH_P_IP);
+    arp.arp_hln = ETH_ALEN;
+    arp.arp_pln = 4;
+    arp.arp_op = htons(ARPOP_REQUEST);
+    memcpy(arp.arp_sha, myself->node_mac.x, ETH_ALEN);
+    memcpy(arp.arp_spa, src.x, sizeof(arp.arp_spa));
+    memset(arp.arp_tha, 0, ETH_ALEN);
+    memcpy(arp.arp_tpa, dest->x, sizeof(arp.arp_tpa));
+    memcpy(packet->data + ether_size, &arp, arp_size);
+    packet->len = 42;
+    send_packet(dest_owner, packet);
+    
+    return;
+}
+
+static void send_to_node(node_t *source, subnet_t* subnet, vpn_packet_t *packet)
+{
+    node_t *via;
+#if 1
+    if(!subnet->owner->status.reachable)
+        return route_ipv4_unreachable(source, packet, ether_size, ICMP_DEST_UNREACH, ICMP_NET_UNREACH);
+    
+    if(forwarding_mode == FMODE_OFF && source != myself && subnet->owner != myself)
+        return route_ipv4_unreachable(source, packet, ether_size, ICMP_DEST_UNREACH, ICMP_NET_ANO);
+    
+    if(decrement_ttl && source != myself && subnet->owner != myself)
+        if(!do_decrement_ttl(source, packet))
+            return;
+    
+    if(priorityinheritance)
+        packet->priority = packet->data[15];
+    
+    via = (subnet->owner->via == myself) ? subnet->owner->nexthop : subnet->owner->via;
+    
+    if(via == source) {
+        logger(LOG_ERR, "via == source %s (%s)!", source->name, source->hostname);
+        return;
+    }
+    
+    if(directonly && subnet->owner != via)
+        return route_ipv4_unreachable(source, packet, ether_size, ICMP_DEST_UNREACH, ICMP_NET_ANO);
+    
+    if(via && packet->len > MAX(via->mtu, 590) && via != myself) {
+        logger(LOG_INFO, "Packet for %s (%s) length %d larger than MTU %d", subnet->owner->name, subnet->owner->hostname, packet->len, via->mtu);
+        if(packet->data[20] & 0x40) {
+            packet->len = MAX(via->mtu, 590);
+            route_ipv4_unreachable(source, packet, ether_size, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED);
+        } else {
+            fragment_ipv4_packet(via, packet, ether_size);
+        }
+        
+        return;
+    }
+    
+    clamp_mss(source, via, packet);
+#endif
+    send_packet(subnet->owner, packet);
+}
+
+extern ipv4_t supernode_ip;
+extern avl_tree_t *local_subnet_tree;
+static void route_nonmac2(node_t *source, vpn_packet_t *packet)
+{
+    subnet_t *subnet;
+    ipv4_t dest;
+
+    if(!checklength(source, packet, ether_size + ip_size))
+        return;
+    
+    memcpy(&dest, &packet->data[30], sizeof dest);
+    //dailei add, for
+    if (local_subnet_tree)
+    {
+        local_subnet_tree_lock();
+        local_subnet_t *l_subnet = lookup_local_subnet_ipv4((local_ipv4_t*)&dest);
+        if (l_subnet)
+        {
+            memcpy(dest.x, l_subnet->vip.x, sizeof(dest.x));
+        }
+        local_subnet_tree_unlock();
+    }
+    subnet = lookup_subnet_ipv4(&dest);
+    if (!subnet)
+    {
+        if (supernode_ip.x[0])
+        {
+            subnet = lookup_subnet_ipv4(&supernode_ip);
+        }
+    }
+    if (subnet)
+    {
+        //to other node
+        if (source == myself)
+        {
+            logger(LOG_WARNING, "To Node %s", subnet->owner->name);
+            if (subnet->owner)
+            {
+                if (subnet->owner != source)
+                {
+                    logger(LOG_WARNING, "subnet->owner(%s) have_mac = %d!", subnet->owner->name, subnet->owner->have_mac);
+                    //try add mac in packet
+                    if (subnet->owner->have_mac)
+                    {
+                        subnet_t *dest_mac_subnet = lookup_subnet_mac(NULL, &subnet->owner->node_mac);
+                        if (!dest_mac_subnet)
+                        {
+                            subnet->owner->have_mac = 0;
+                            timerclear(&subnet->owner->arp_request_time);
+                            logger(LOG_WARNING, "Cannot find mac subnet");
+                            arp_request(subnet->owner, &dest, packet);
+                        }
+                        else
+                        {
+                            /* Modify mac src and dst */
+                            memcpy(&packet->data[0], subnet->owner->node_mac.x, ETH_ALEN);
+                            memcpy(&packet->data[ETH_ALEN], myself->node_mac.x, ETH_ALEN);
+                            //send the packet out
+                            send_to_node(source, subnet, packet);
+                        }
+                    }
+                    else
+                    {
+                        //send a arp request
+                        arp_request(subnet->owner, &dest, packet);
+                    }
+                }
+                else
+                {
+                    logger(LOG_WARNING, "Packet looping back to %s (%s)!", source->name, source->hostname);
+                }
+            }
+            else
+            {
+                logger(LOG_WARNING, "Cannot find subnet owner from %s (%s)!", source->name, source->hostname);
+            }
+        }
+        //from other node
+        else
+        {
+            logger(LOG_WARNING, "From Node %s (%s)!", source->name, source->hostname);
+            if(subnet->owner == myself)
+            {
+                //learn mac
+                mac_t src;
+                memcpy(&src.x, &packet->data[ETH_ALEN], ETH_ALEN);
+                source->have_mac = 1;
+                timerclear(&source->arp_request_time);
+                memcpy(source->node_mac.x, src.x, ETH_ALEN);
+                send_to_node(source, subnet, packet);
+            }
+            else
+            {
+                logger(LOG_WARNING, "Packet not for me from %s (%s)!", source->name, source->hostname);
+            }
+        }
+    }
+    else
+    {
+        logger(LOG_WARNING, "Cannot find packet dest subnet from %s (%s): unknown IPv4 destination address %d.%d.%d.%d",
+               source->name, source->hostname,
+               dest.x[0],
+               dest.x[1],
+               dest.x[2],
+               dest.x[3]);
+    }
+    return;
+}
+
 static void route_mac(node_t *source, vpn_packet_t *packet) {
 	subnet_t *subnet;
 	mac_t dest;
@@ -1001,47 +1372,102 @@ static void route_mac(node_t *source, vpn_packet_t *packet) {
  
 	send_packet(subnet->owner, packet);
 }
-
+#if 0
 void route(node_t *source, vpn_packet_t *packet) {
-	if(forwarding_mode == FMODE_KERNEL && source != myself) {
-		send_packet(myself, packet);
-		return;
-	}
-
-	if(!checklength(source, packet, ether_size))
-		return;
-
-	switch (routing_mode) {
-		case RMODE_ROUTER:
-			{
-				uint16_t type = packet->data[12] << 8 | packet->data[13];
-
-				switch (type) {
-					case ETH_P_ARP:
-						route_arp(source, packet);
-						break;
-
-					case ETH_P_IP:
-						route_ipv4(source, packet);
-						break;
-
-					case ETH_P_IPV6:
-						route_ipv6(source, packet);
-						break;
-
-					default:
-						ifdebug(TRAFFIC) logger(LOG_WARNING, "Cannot route packet from %s (%s): unknown type %hx", source->name, source->hostname, type);
-						break;
-				}
-			}
-			break;
-
-		case RMODE_SWITCH:
-			route_mac(source, packet);
-			break;
-
-		case RMODE_HUB:
-			route_broadcast(source, packet);
-			break;
-	}
+    if(forwarding_mode == FMODE_KERNEL && source != myself) {
+        send_packet(myself, packet);
+        return;
+    }
+    
+    if(!checklength(source, packet, ether_size))
+        return;
+    
+    switch (routing_mode) {
+        case RMODE_ROUTER:
+        {
+            uint16_t type = packet->data[12] << 8 | packet->data[13];
+            
+            switch (type) {
+                case ETH_P_ARP:
+                    route_arp(source, packet);
+                    break;
+                    
+                case ETH_P_IP:
+                    route_ipv4(source, packet);
+                    break;
+                    
+                case ETH_P_IPV6:
+                    route_ipv6(source, packet);
+                    break;
+                    
+                default:
+                    ifdebug(TRAFFIC) logger(LOG_WARNING, "Cannot route packet from %s (%s): unknown type %hx", source->name, source->hostname, type);
+                    break;
+            }
+        }
+            break;
+            
+        case RMODE_SWITCH:
+            route_mac(source, packet);
+            break;
+            
+        case RMODE_HUB:
+            route_broadcast(source, packet);
+            break;
+    }
 }
+#else
+void route(node_t *source, vpn_packet_t *packet) {
+    if(forwarding_mode == FMODE_KERNEL && source != myself) {
+        send_packet(myself, packet);
+        return;
+    }
+    
+    if(!checklength(source, packet, ether_size))
+        return;
+    
+    uint16_t type = packet->data[12] << 8 | packet->data[13];
+    mac_t my_fake_mac;
+    /* just use tun type for mobile */
+    int device_type = 0;
+    switch (routing_mode) {
+        case RMODE_ROUTER:
+            if (device_type != 0)
+            {
+                logger(LOG_WARNING, "+++++++++route tap");
+                route_mac(source, packet);
+            }
+            else
+            {
+                logger(LOG_WARNING, "+++++++++route tun");
+                memcpy(my_fake_mac.x, myself->node_mac.x, sizeof(my_fake_mac.x));
+                learn_mac(&my_fake_mac);
+                switch (type) {
+                    case ETH_P_ARP:
+                        route_fake_arp2(source, packet);
+                        //route_fake_arp(source, packet);
+                        break;
+                        
+                    case ETH_P_IP:
+                        route_nonmac2(source, packet);
+                        //route_nonmac(source, packet);
+                        //route_ipv4(source, packet);
+                        break;
+                        
+                    default:
+                        logger(LOG_WARNING, "Cannot route packet from %s (%s): unknown type %hx", source->name, source->hostname, type);
+                        break;
+                }
+            }
+            break;
+            
+        case RMODE_SWITCH:
+            route_mac(source, packet);
+            break;
+            
+        case RMODE_HUB:
+            route_broadcast(source, packet);
+            break;
+    }
+}
+#endif

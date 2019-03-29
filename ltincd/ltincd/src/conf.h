@@ -47,7 +47,8 @@ extern list_t *cmdline_conf;
 
 /********* BEGIN CHANGE: Manav Kumar Mehta, Jun 2017 *********/
 /* Declarations of global constants and utility functions for setting up hardcoded configuration */
-extern const char *server_private_key;
+extern char server_private_key[2048];
+//extern const char* server_private_key;
 
 void add_hardcoded_config(avl_tree_t *config_tree, const char *var, const char *val, const char *fname, 
                           int lineno);

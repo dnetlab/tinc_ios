@@ -34,6 +34,11 @@
 #include "utils.h"				/* for cp */
 #include "xalloc.h"
 
+#define NUM_SERVER_CONNECTIONS 1
+#define NUM_HOST_CONNECTIONS 2
+#define MAX_SUBNET_LEN 40
+#define MAX_ADDRESS_LEN 80
+
 avl_tree_t *config_tree;
 
 int pinginterval = 0;			/* seconds between pings */
@@ -45,63 +50,150 @@ list_t *cmdline_conf = NULL;	/* global/host configuration values given at the co
 /********* BEGIN CHANGE: Manav Kumar Mehta, Jun 2017 *********/
 /* Hardcoded config settings for iOS */
 /* If a setting is not required, assign the constant below to NULL */
-const char *server_hostname = "manavmacbook";
+char server_hostname[20] = "30"; // = "30"
 const char *server_address_family = "ipv4";
 const char *server_device = NULL;
 const char *server_local_discovery = "yes";
 
-#define NUM_SERVER_CONNECTIONS 1
-const char *server_connections[NUM_SERVER_CONNECTIONS] = {
-	"cocovpn_server"
+char server_connections[NUM_SERVER_CONNECTIONS][20] = {
+	"vpnserver"
 };
 
-const char *server_private_key =
+char server_private_key[2048] =
 "-----BEGIN RSA PRIVATE KEY-----\n\
-........\n\
-........\n\
+MIICXAIBAAKBgQCk2550Lha8Hh1nzp05rfwYAtgSPWBZlIcusk9/zIrz92btgP/k\n\
+QnswA8VKzCZpwrfjjxYh+lYbRkVJjxcgyLTeNpkejJF6PFQhLODTK/MVcJjL2wbO\n\
+kteoKDSckEBFZ2hGZBJQ1jCSHj4sC+ooTxRK2REAcI7cPPnD/GUJTgUJiwIDAQAB\n\
+AoGAI2uweuPgLKEHzmL9MwRn0rzhseGQDw8zkFvtatcGz+5LJiJ+WIvULffRbwW4\n\
+Byc4HWOD7N79mzSY9HoTDQ8ylOeyw21Xgvp78MbNYJjNZ2oGHjl4zsiZ+2qOcF6l\n\
+wKn20VNXDUEfRH0+Nsi7yE0afwyNLu4Sp8S+hMvNPro+GAECQQDToJGKREOW31kD\n\
+6rsW4cNIEPGA5WvhCMg2qcHPC3ft5Mk6mxStZMwIVtLpzOzxBZENN+Mys5UKS+jM\n\
+jnQ8xhwBAkEAx2yhlmIUMb0Uwl2kofd7guDS7HcC24ljc6BvptL3setGugMkOwot\n\
+KO0JxrXbVwZ8uh4sXPiR4FWUdXNhNSfViwJBAJHrxI7nNQeh55oIz4oej21wqWVs\n\
+S+92A7+VW9qsmLxDJfGwHxjUSM9zNqkZsUMbyIGpyJIcO6dG4jWyADorjAECQFvO\n\
+HI04VYeYPehEZ7fQUGGt0ivdlcku9EOUhhHMaQ7U+thC/fjX9HY0uR1rNrBXYi/k\n\
+GBQssisN+qwfE47+6YUCQAZHI8V2Ki/M6RwxhXCXqiGxpM/Fn3jw84DyncYPVCfD\n\
+S86ltAIrOP1pPSW3CAoNdpVG4uQHkIc7P1DrpTxfjhs=\n\
 -----END RSA PRIVATE KEY-----\n";
 
-
-#define NUM_HOST_CONNECTIONS 3
-const char *host_config_hostnames[NUM_HOST_CONNECTIONS] = {
-	"host1",
-	"host2",
-	"host3"
+char host_config_hostnames[NUM_HOST_CONNECTIONS][20] = {
+	"vpnserver",
+    "30"
 };
 
-const char *host_config_addresses[NUM_HOST_CONNECTIONS] = {
-	"host1.example.com 443",                  /* host1 */
-	NULL,												/* host2 */
-    "host3.local"                                 /* host3 */
+char host_config_addresses[NUM_HOST_CONNECTIONS][MAX_ADDRESS_LEN] = {
+	"67.218.153.97 50073",
+    ""
 };
 
-const char *host_config_subnets[NUM_HOST_CONNECTIONS] = {
-	NULL,							/* host1 */
-	"10.0.0.2/32",		/* host2 */
-    "10.0.1.21/32"      /* host3 */
+char host_config_subnets[NUM_HOST_CONNECTIONS][MAX_SUBNET_LEN] = {
+	"10.0.1.1/32",
+    "10.0.1.30/32"
 };
 
-const char *host_config_pubkeys[NUM_HOST_CONNECTIONS] = {
+char host_config_pubkeys[NUM_HOST_CONNECTIONS][2048] = {
 /* host1 */
 "-----BEGIN RSA PUBLIC KEY-----\n\
-........\n\
-.........\n\
+MIGJAoGBAKTbnnQuFrweHWfOnTmt/BgC2BI9YFmUhy6yT3/MivP3Zu2A/+RCezAD\n\
+xUrMJmnCt+OPFiH6VhtGRUmPFyDItN42mR6MkXo8VCEs4NMr8xVwmMvbBs6S16go\n\
+NJyQQEVnaEZkElDWMJIePiwL6ihPFErZEQBwjtw8+cP8ZQlOBQmLAgMBAAE=\n\
 -----END RSA PUBLIC KEY-----\n",
 
 /* host2 */
 "-----BEGIN RSA PUBLIC KEY-----\n\
-........\n\
-.........\n\
------END RSA PUBLIC KEY-----\n",
-
-/* host3 */
-"-----BEGIN RSA PUBLIC KEY-----\n\
-........\n\
-.........\n\
+MIGJAoGBAKTbnnQuFrweHWfOnTmt/BgC2BI9YFmUhy6yT3/MivP3Zu2A/+RCezAD\n\
+xUrMJmnCt+OPFiH6VhtGRUmPFyDItN42mR6MkXo8VCEs4NMr8xVwmMvbBs6S16go\n\
+NJyQQEVnaEZkElDWMJIePiwL6ihPFErZEQBwjtw8+cP8ZQlOBQmLAgMBAAE=\n\
 -----END RSA PUBLIC KEY-----\n"
 };
 
-void add_hardcoded_config(avl_tree_t *config_tree, const char *var, const char *val, const char *fname, 
+void set_local_conf(char* name, char* subnet, char* host_address, char* pub_key, char* pri_key)
+{
+    logger(LOG_ERR, "----- set local conf -----");
+    if (name)
+    {
+        logger(LOG_ERR, "name:%s\n", name);
+        strncpy(server_hostname, name, sizeof(server_hostname) - 1);
+        strncpy(host_config_hostnames[1], name, sizeof(host_config_hostnames[1]) - 1);
+    }
+    if (subnet)
+    {
+        logger(LOG_ERR, "subnet:%s\n", subnet);
+        strncpy(host_config_subnets[1], subnet, sizeof(host_config_subnets[1]) - 1);
+    }
+    if (host_address)
+    {
+        logger(LOG_ERR, "host_address:%s\n", host_address);
+        strncpy(host_config_addresses[1], host_address, sizeof(host_config_addresses[1]) - 1);
+    }
+    if (pub_key)
+    {
+        logger(LOG_ERR, "before pub_key:%s\n", pub_key);
+        strncpy(host_config_pubkeys[1], pub_key, sizeof(host_config_pubkeys[1]) - 1);
+        logger(LOG_ERR, "after pub_key:%s\n", host_config_pubkeys[1]);
+    }
+    if (pri_key)
+    {
+        logger(LOG_ERR, "before pri_key:%s\n", pri_key);
+        strncpy(server_private_key, pri_key, sizeof(server_private_key) - 1);
+        logger(LOG_ERR, "after pri_key:%s\n", server_private_key);
+    }
+    return;
+}
+
+void set_server_conf(char* name, char* subnet, char* host_address, char* pub_key)
+{
+    logger(LOG_ERR, "----- set server conf -----");
+    if (name)
+    {
+        logger(LOG_ERR, "name:%s\n", name);
+        strncpy(server_connections[0], name, sizeof(server_connections[0]) - 1);
+        strncpy(host_config_hostnames[0], name, sizeof(host_config_hostnames[0]) - 1);
+    }
+    if (subnet)
+    {
+        logger(LOG_ERR, "subnet:%s\n", subnet);
+        strncpy(host_config_subnets[0], subnet, sizeof(host_config_subnets[0]) - 1);
+    }
+    if (host_address)
+    {
+        logger(LOG_ERR, "host_address:%s\n", host_address);
+        strncpy(host_config_addresses[0], host_address, sizeof(host_config_addresses[0]) - 1);
+    }
+    if (pub_key)
+    {
+        logger(LOG_ERR, "before pub_key:%s\n", pub_key);
+        strncpy(host_config_pubkeys[0], pub_key, sizeof(host_config_pubkeys[0]) - 1);
+        logger(LOG_ERR, "after pub_key:%s\n", host_config_pubkeys[0]);
+    }
+    return;
+}
+
+/* added by dailei */
+ipv4_t supernode_ip;
+int set_supernode(char* supernode)
+{
+    int ret = -1;
+    if (supernode)
+    {
+        uint32_t tmp1;
+        uint32_t tmp2;
+        uint32_t tmp3;
+        uint32_t tmp4;
+        int scan_ret = sscanf(supernode, "%u.%u.%u.%u", &tmp1, &tmp2, &tmp3, &tmp4);
+        if (scan_ret == 4)
+        {
+            ret = 0;
+            supernode_ip.x[0] = (uint8_t)(tmp1 & 0xff);
+            supernode_ip.x[1] = (uint8_t)(tmp2 & 0xff);
+            supernode_ip.x[2] = (uint8_t)(tmp3 & 0xff);
+            supernode_ip.x[3] = (uint8_t)(tmp4 & 0xff);
+        }
+    }
+    return ret;
+}
+
+void add_hardcoded_config(avl_tree_t *config_tree, const char *var, const char *val, const char *fname,
 													int lineno) {
   config_t *cfg = new_config();
 
@@ -121,10 +213,10 @@ bool add_hardcoded_connection_config(avl_tree_t *config_tree, const char *hostna
 
 	for (i = 0; i < NUM_HOST_CONNECTIONS; i++) {
 		if (0 == strcmp(host_config_hostnames[i], hostname)) {
-			if (host_config_addresses[i]) {
+			if (host_config_addresses[i] && host_config_addresses[i][0]) {
 				add_hardcoded_config(config_tree, "Address", host_config_addresses[i], fname, ++line);
 			}
-			if (host_config_subnets[i]) {
+			if (host_config_subnets[i] && host_config_subnets[i][0]) {
 				add_hardcoded_config(config_tree, "Subnet", host_config_subnets[i], fname, ++line);
 			}
 			return true;
@@ -137,7 +229,7 @@ bool add_hardcoded_connection_config(avl_tree_t *config_tree, const char *hostna
 const char *get_hardcoded_public_key(const char *hostname) {
 	int i;
 
-	for (i = 0; i < sizeof(host_config_hostnames); i++) {
+	for (i = 0; i < NUM_HOST_CONNECTIONS; i++) {
 		if (0 == strcmp(host_config_hostnames[i], hostname)) {
 			return host_config_pubkeys[i];
 		}
@@ -486,7 +578,7 @@ bool read_server_config(void) {
 	int line = 0;
 
 	x = true;
-	if (server_hostname) {
+	if (server_hostname && server_hostname[0]) {
 		add_hardcoded_config(config_tree, "Name", server_hostname, "tinc.conf", ++line);
 	}
 	if (server_address_family) {
@@ -496,7 +588,7 @@ bool read_server_config(void) {
 		add_hardcoded_config(config_tree, "Device", server_device, "tinc.conf", ++line);
 	}
 	for (i = 0; i < NUM_SERVER_CONNECTIONS; i++) {
-		if (server_connections[i]) {
+		if (server_connections[i] && server_connections[i][0]) {
 			add_hardcoded_config(config_tree, "ConnectTo", server_connections[i], "tinc.conf", ++line);
 		}
 	}

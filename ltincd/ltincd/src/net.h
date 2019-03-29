@@ -21,7 +21,7 @@
 #ifndef __TINC_NET_H__
 #define __TINC_NET_H__
 
-#include <openssl/evp.h>
+#include "openssl/evp.h"
 
 #include "ipv6.h"
 

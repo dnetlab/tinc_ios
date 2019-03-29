@@ -43,6 +43,7 @@
 #include "proxy.h"
 #include "route.h"
 #include "subnet.h"
+#include "local_subnet.h"
 #include "utils.h"
 #include "xalloc.h"
 
@@ -68,13 +69,26 @@ RSA *xPEM_read_RSAPublicKey_from_str(const char *key, RSA **rsa) {
   	logger(LOG_ERR, "Could not read public key string into struct");
   	return NULL;
   }
-
+#if 0
   if (!(retrsa = PEM_read_bio_RSAPublicKey(keybio, rsa, NULL, NULL))) {
 		if (!(retrsa = PEM_read_bio_RSA_PUBKEY(keybio, rsa, NULL, NULL))) {
             logger(LOG_ERR, "Failed to create RSA struct for public key");
 		}
 	}
-
+#else
+    //check the first
+    if (strncmp(key, "-----BEGIN RSA PUBLIC KEY", strlen("-----BEGIN RSA PUBLIC KEY")) == 0)
+    {
+        retrsa = PEM_read_bio_RSAPublicKey(keybio, rsa, NULL, NULL);
+    }
+    else
+    {
+        retrsa = PEM_read_bio_RSA_PUBKEY(keybio, rsa, NULL, NULL);
+    }
+    if (!retrsa) {
+        logger(LOG_ERR, "Failed to create RSA struct for public key");
+    }
+#endif
   BIO_free(keybio);
   
   return retrsa;
@@ -417,6 +431,21 @@ char *get_name(void) {
 	return name;
 }
 
+/* generate a random mac for self node */
+static void random_fake_mac(mac_t* addr)
+{
+    int i;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    srandom(tv.tv_usec);
+    for(i = 0; i < 6; i++)
+    {
+        uint8_t tmp = random() % 256;
+        addr->x[i] = tmp;
+    }
+    return;
+}
+
 /*
   Configure node_t myself and set up the local sockets (listen only)
 */
@@ -437,7 +466,14 @@ static bool setup_myself(void) {
 
 	myself = new_node();
 	myself->connection = new_connection();
-
+    
+    //added by dailei
+#if 1
+    timerclear(&myself->arp_request_time);
+    myself->have_mac = 1;
+    random_fake_mac(&myself->node_mac);
+#endif
+    
 	myself->hostname = xstrdup("MYSELF");
 	myself->connection->hostname = xstrdup("MYSELF");
 

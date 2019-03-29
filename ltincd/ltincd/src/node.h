@@ -86,6 +86,11 @@ typedef struct node_t {
 	length_t maxmtu;			/* Probed maximum MTU */
 	int mtuprobes;				/* Number of probes */
 	event_t *mtuevent;			/* Probe event */
+    
+    //added by dailei,used for tun
+    struct timeval  arp_request_time;   /* arp request timer */
+    int             have_mac;           /* whether a node have a mac */
+    mac_t           node_mac;           /* node's mac */
 } node_t;
 
 extern struct node_t *myself;
